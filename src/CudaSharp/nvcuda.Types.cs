@@ -1,6 +1,4 @@
-﻿using System.Runtime.InteropServices;
-
-namespace CudaSharp;
+﻿namespace CudaSharp;
 
 public static partial class nvcuda
 {
@@ -9,6 +7,9 @@ public static partial class nvcuda
     public readonly record struct CUdeviceptr(IntPtr Value);
     public readonly record struct CUevent(IntPtr Value);
     public readonly record struct CUfunction(IntPtr Value);
+    public readonly record struct CUkernel(IntPtr Value);
+    public readonly record struct CUlinkState(IntPtr Value);
+    public readonly record struct CUlibrary(IntPtr Value);
     public readonly record struct CUmodule(IntPtr Value);
     public readonly record struct CUstream(IntPtr Value);
     public readonly record struct CUsurfObject(ulong Value);
@@ -84,6 +85,95 @@ public static partial class nvcuda
         CU_MEMHOSTALLOC_PORTABLE = 0x01,
         CU_MEMHOSTALLOC_DEVICEMAP = 0x02,
         CU_MEMHOSTALLOC_WRITECOMBINED = 0x04,
+    }
+
+    public enum CUstreamCaptureMode
+    {
+        CU_STREAM_CAPTURE_MODE_GLOBAL = 0,
+        CU_STREAM_CAPTURE_MODE_THREAD_LOCAL = 1,
+        CU_STREAM_CAPTURE_MODE_RELAXED = 2,
+    }
+
+    /// <summary>
+    /// CUDA JIT compiler and linker options.
+    /// </summary>
+    /// <seealso href="https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TYPES.html#group__CUDA__TYPES_1g5527fa8030d5cabedc781a04dbd1997d"/>
+    public enum CUjit_option
+    {
+        CU_JIT_MAX_REGISTERS = 0,
+        CU_JIT_THREADS_PER_BLOCK = 1,
+        CU_JIT_WALL_TIME = 2,
+        CU_JIT_INFO_LOG_BUFFER = 3,
+        CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES = 4,
+        CU_JIT_ERROR_LOG_BUFFER = 5,
+        CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES = 6,
+        CU_JIT_OPTIMIZATION_LEVEL = 7,
+        CU_JIT_TARGET_FROM_CUCONTEXT = 8,
+        CU_JIT_TARGET = 9,
+    }
+
+    /// <summary>
+    /// CUDA JIT linker input types.
+    /// </summary>
+    /// <seealso href="https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TYPES.html#group__CUDA__TYPES_1gc78e5cb421c428676861189048888958"/>
+    public enum CUjitInputType
+    {
+        CU_JIT_INPUT_CUBIN = 0,
+        CU_JIT_INPUT_PTX = 1,
+        CU_JIT_INPUT_FATBINARY = 2,
+        CU_JIT_INPUT_OBJECT = 3,
+        CU_JIT_INPUT_LIBRARY = 4,
+        CU_JIT_INPUT_NVVM = 5,
+    }
+
+    /// <summary>
+    /// CUDA library loading options.
+    /// </summary>
+    /// <seealso href="https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TYPES.html#group__CUDA__TYPES_1g1ac4f8471f550201cab6f17a49416989"/>
+    public enum CUlibraryOption
+    {
+        CU_LIBRARY_HOST_UNIVERSAL_FUNCTION_AND_DATA_TABLE = 0,
+        CU_LIBRARY_BINARY_IS_PRESERVED = 1,
+        CU_LIBRARY_NUM_OPTIONS = 2,
+    }
+
+    /// <summary>
+    /// Flags for instantiating a graph.
+    /// </summary>
+    /// <seealso href="https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TYPES.html#group__CUDA__TYPES_1g070bf5517d3a7915667c256eefce4956"/>
+    public enum CUgraphInstantiate_flags : ulong
+    {
+        CUDA_GRAPH_INSTANTIATE_FLAG_AUTO_FREE_ON_LAUNCH = 1,
+        CUDA_GRAPH_INSTANTIATE_FLAG_UPLOAD = 2,
+        CUDA_GRAPH_INSTANTIATE_FLAG_DEVICE_LAUNCH = 4,
+        CUDA_GRAPH_INSTANTIATE_FLAG_USE_NODE_PRIORITY = 8,
+    }
+
+    /// <summary>
+    /// Graph instantiation results.
+    /// </summary>
+    /// <seealso href="https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TYPES.html#group__CUDA__TYPES_1g863484740f7d9f82c908d228f791cc56"/>
+    public enum CUgraphInstantiateResult
+    {
+        CUDA_GRAPH_INSTANTIATE_SUCCESS = 0,
+        CUDA_GRAPH_INSTANTIATE_ERROR = 1,
+        CUDA_GRAPH_INSTANTIATE_INVALID_STRUCTURE = 2,
+        CUDA_GRAPH_INSTANTIATE_NODE_OPERATION_NOT_SUPPORTED = 3,
+        CUDA_GRAPH_INSTANTIATE_MULTIPLE_CTXS_NOT_SUPPORTED = 4,
+        CUDA_GRAPH_INSTANTIATE_CONDITIONAL_HANDLE_UNUSED = 5,
+    }
+
+    /// <summary>
+    /// Graph instantiation parameters.
+    /// </summary>
+    /// <seealso href="https://docs.nvidia.com/cuda/cuda-driver-api/structCUDA__GRAPH__INSTANTIATE__PARAMS.html"/>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct CUDA_GRAPH_INSTANTIATE_PARAMS
+    {
+        public ulong flags;
+        public CUstream hUploadStream;
+        public CUgraphNode hErrNode_out;
+        public CUgraphInstantiateResult result_out;
     }
 
     public enum CUaccessProperty

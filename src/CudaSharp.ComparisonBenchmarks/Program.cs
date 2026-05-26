@@ -29,6 +29,18 @@ Action<string> log = t => { Console.WriteLine(t); Trace.WriteLine(t); };
 
 log($"{Environment.Version} args: {args.Length} versions: {GetVersions()}");
 
+
+
+if (TryRunSerialLaunchProfile(args))
+{
+    return;
+}
+
+if (TryRunStraightLineGraphProfile(args))
+{
+    return;
+}
+
 // Use args as switch to run BDN or not e.g. BDN only run when using script
 if (args.Length > 0)
 {
@@ -57,6 +69,7 @@ if (args.Length > 0)
     var nameToBenchTypesSet = new Dictionary<string, Type[]>()
     {
         { nameof(LaunchKernelBench), new[] { typeof(LaunchKernelBench), } },
+        { nameof(SerialLaunchKernelBench), new[] { typeof(SerialLaunchKernelBench), } },
         { nameof(TestBench), new[] { typeof(TestBench), } },
     };
     foreach (var (name, benchTypes) in nameToBenchTypesSet)
@@ -97,6 +110,131 @@ static string GetFileVersion(Assembly assembly) =>
     FileVersionInfo.GetVersionInfo(assembly.Location).FileVersion!;
 
 static string GetSourceDirectory([CallerFilePath] string filePath = "") => Path.GetDirectoryName(filePath)!;
+
+static bool TryRunSerialLaunchProfile(string[] args)
+{
+    if (!args.Contains("--profile-serial-launch", StringComparer.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    var variant = GetOption(args, "--variant") ?? "raw";
+    var warmupCount = GetIntOption(args, "--warmup", 10);
+    var repetitionCount = GetIntOption(args, "--repetitions", 1000);
+    var serialLaunchCount = GetIntOption(args, "--serial-launch-count", 256);
+
+    var bench = new SerialLaunchKernelBench
+    {
+        SerialLaunchCount = serialLaunchCount,
+    };
+
+    var benchmarkName = variant.ToLowerInvariant() switch
+    {
+        "raw" => nameof(SerialLaunchKernelBench.cuLaunchKernel_Raw_SerialTripleBuffer_StreamSync),
+        "graph" => nameof(SerialLaunchKernelBench.cuGraphLaunch_SerialTripleBuffer_StreamSync),
+        "device-graph" => nameof(SerialLaunchKernelBench.cuGraphLaunch_DeviceLaunchCapableSerialTripleBuffer_StreamSync),
+        "device-launch" => nameof(SerialLaunchKernelBench.cuGraphLaunch_TrueDeviceTailLaunchSerialTripleBuffer_StreamSync),
+        "device-fire-and-forget" => nameof(SerialLaunchKernelBench.cuGraphLaunch_TrueDeviceFireAndForgetSerialTripleBuffer_StreamSync),
+        "captured" => nameof(SerialLaunchKernelBench.cuGraphLaunch_CapturedSerialTripleBuffer_StreamSync),
+        _ => throw new ArgumentOutOfRangeException(nameof(args),
+            $"Unsupported serial profile variant '{variant}'. Use raw, graph, device-graph, device-launch, device-fire-and-forget, or captured."),
+    };
+
+    Action run = benchmarkName switch
+    {
+        nameof(SerialLaunchKernelBench.cuLaunchKernel_Raw_SerialTripleBuffer_StreamSync) =>
+            bench.cuLaunchKernel_Raw_SerialTripleBuffer_StreamSync,
+        nameof(SerialLaunchKernelBench.cuGraphLaunch_SerialTripleBuffer_StreamSync) =>
+            bench.cuGraphLaunch_SerialTripleBuffer_StreamSync,
+        nameof(SerialLaunchKernelBench.cuGraphLaunch_DeviceLaunchCapableSerialTripleBuffer_StreamSync) =>
+            bench.cuGraphLaunch_DeviceLaunchCapableSerialTripleBuffer_StreamSync,
+        nameof(SerialLaunchKernelBench.cuGraphLaunch_TrueDeviceTailLaunchSerialTripleBuffer_StreamSync) =>
+            bench.cuGraphLaunch_TrueDeviceTailLaunchSerialTripleBuffer_StreamSync,
+        nameof(SerialLaunchKernelBench.cuGraphLaunch_TrueDeviceFireAndForgetSerialTripleBuffer_StreamSync) =>
+            bench.cuGraphLaunch_TrueDeviceFireAndForgetSerialTripleBuffer_StreamSync,
+        nameof(SerialLaunchKernelBench.cuGraphLaunch_CapturedSerialTripleBuffer_StreamSync) =>
+            bench.cuGraphLaunch_CapturedSerialTripleBuffer_StreamSync,
+        _ => throw new UnreachableException(),
+    };
+
+    Console.WriteLine(
+        $"Profiling serial launch variant '{variant}' with SerialLaunchCount={serialLaunchCount}, warmup={warmupCount}, repetitions={repetitionCount}.");
+
+    bench.Setup();
+    try
+    {
+        for (var i = 0; i < warmupCount; i++)
+        {
+            run();
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+        for (var i = 0; i < repetitionCount; i++)
+        {
+            run();
+        }
+
+        stopwatch.Stop();
+        Console.WriteLine(
+            $"Completed {repetitionCount} profiled invocations in {stopwatch.Elapsed.TotalMilliseconds:F3} ms.");
+    }
+    finally
+    {
+        bench.Cleanup();
+    }
+
+    return true;
+}
+
+static bool TryRunStraightLineGraphProfile(string[] args)
+{
+    if (!args.Contains("--profile-straight-line-graph", StringComparer.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    var graphLength = GetIntOption(args, "--graph-length", 256);
+    var warmupCount = GetIntOption(args, "--warmup", 10);
+    var repetitionCount = GetIntOption(args, "--repetitions", 1000);
+
+    Console.WriteLine(
+        $"Profiling straight-line graph with GraphLength={graphLength}, warmup={warmupCount}, repetitions={repetitionCount}.");
+
+    using var perf = new StraightLineGraphPerf(graphLength);
+    var metrics = perf.Measure(warmupCount, repetitionCount);
+
+    Console.WriteLine($"instantiation_ms={metrics.InstantiationMilliseconds:F3}");
+    Console.WriteLine($"upload_api_us={metrics.UploadApiMicroseconds:F3}");
+    Console.WriteLine($"upload_total_us={metrics.UploadTotalMicroseconds:F3}");
+    Console.WriteLine($"first_launch_api_us={metrics.FirstLaunchApiMicroseconds:F3}");
+    Console.WriteLine($"first_launch_total_us={metrics.FirstLaunchTotalMicroseconds:F3}");
+    Console.WriteLine($"repeat_launch_api_us={metrics.RepeatLaunchApiMicroseconds:F3}");
+    Console.WriteLine($"repeat_launch_total_us={metrics.RepeatLaunchTotalMicroseconds:F3}");
+    Console.WriteLine($"repeat_launch_device_us={metrics.RepeatLaunchDeviceMicroseconds:F3}");
+
+    return true;
+}
+
+static string? GetOption(string[] args, string name)
+{
+    for (var i = 0; i < args.Length - 1; i++)
+    {
+        if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase))
+        {
+            return args[i + 1];
+        }
+    }
+
+    return null;
+}
+
+static int GetIntOption(string[] args, string name, int defaultValue)
+{
+    var value = GetOption(args, name);
+    return value is not null && int.TryParse(value, out var parsed)
+        ? parsed
+        : defaultValue;
+}
 
 class CustomMarkdownExporter : MarkdownExporter
 {
