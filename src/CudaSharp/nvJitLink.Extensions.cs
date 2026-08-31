@@ -10,92 +10,114 @@ public static partial class nvJitLink
         ReadOnlySpan<string> options)
     {
         var optionPointers = stackalloc byte*[options.Length];
-        var allocatedOptions = new IntPtr[options.Length];
+        var byteCount = 0;
+        for (var i = 0; i < options.Length; i++)
+        {
+            byteCount = checked(byteCount + Encoding.UTF8.GetByteCount(options[i]) + 1);
+        }
+
+        byte[]? pooledBuffer = null;
+        Span<byte> buffer = byteCount <= 4096
+            ? stackalloc byte[byteCount]
+            : (pooledBuffer = ArrayPool<byte>.Shared.Rent(byteCount)).AsSpan(0, byteCount);
 
         try
         {
-            for (var i = 0; i < options.Length; i++)
+            fixed (byte* bufferPointer = buffer)
             {
-                var optionBytes = Encoding.UTF8.GetBytes($"{options[i]}\0");
-                allocatedOptions[i] = Marshal.AllocHGlobal(optionBytes.Length);
-                Marshal.Copy(optionBytes, 0, allocatedOptions[i], optionBytes.Length);
-                optionPointers[i] = (byte*)allocatedOptions[i];
-            }
+                var offset = 0;
+                for (var i = 0; i < options.Length; i++)
+                {
+                    optionPointers[i] = bufferPointer + offset;
+                    offset += Encoding.UTF8.GetBytes(options[i], buffer[offset..]);
+                    buffer[offset++] = 0;
+                }
 
-            return nvJitLinkCreate(out handle, (uint)options.Length, optionPointers);
+                return nvJitLinkCreate(out handle, (uint)options.Length, optionPointers);
+            }
         }
         finally
         {
-            for (var i = 0; i < allocatedOptions.Length; i++)
+            if (pooledBuffer is not null)
             {
-                if (allocatedOptions[i] != IntPtr.Zero)
-                {
-                    Marshal.FreeHGlobal(allocatedOptions[i]);
-                }
+                ArrayPool<byte>.Shared.Return(pooledBuffer);
             }
         }
     }
 
-    public static unsafe string nvJitLinkGetErrorLogString(nvJitLinkHandle handle)
+    public static unsafe nvJitLinkResult nvJitLinkAddData(
+        nvJitLinkHandle handle,
+        nvJitLinkInputType inputType,
+        ReadOnlySpan<byte> data,
+        string? name)
     {
-        nvJitLinkGetErrorLogSize(handle, out var logSize).Ok();
-        if (logSize == 0) { return string.Empty; }
+        fixed (byte* dataPointer = data)
+        {
+            return nvJitLinkAddData(handle, inputType, dataPointer, (nuint)data.Length, name);
+        }
+    }
 
-        byte[]? pooledArray = null;
-        Span<byte> bufferSpan = logSize <= 4096
-            ? stackalloc byte[(int)logSize]
-            : (pooledArray = ArrayPool<byte>.Shared.Rent((int)logSize));
+    public static byte[] nvJitLinkGetLinkedCubin(nvJitLinkHandle handle) =>
+        AllocateOutput(handle, nvJitLinkGetLinkedCubinSize, nvJitLinkGetLinkedCubin);
+
+    public static byte[] nvJitLinkGetLinkedLTOIR(nvJitLinkHandle handle) =>
+        AllocateOutput(handle, nvJitLinkGetLinkedLTOIRSize, nvJitLinkGetLinkedLTOIR);
+
+    public static string nvJitLinkGetLinkedPtxString(nvJitLinkHandle handle) =>
+        GetUtf8Output(handle, nvJitLinkGetLinkedPtxSize, nvJitLinkGetLinkedPtx);
+
+    public static string nvJitLinkGetErrorLogString(nvJitLinkHandle handle) =>
+        GetUtf8Output(handle, nvJitLinkGetErrorLogSize, nvJitLinkGetErrorLog);
+
+    public static string nvJitLinkGetInfoLogString(nvJitLinkHandle handle) =>
+        GetUtf8Output(handle, nvJitLinkGetInfoLogSize, nvJitLinkGetInfoLog);
+
+    static byte[] AllocateOutput(
+        nvJitLinkHandle handle,
+        GetOutputSize getSize,
+        GetOutput getOutput)
+    {
+        getSize(handle, out var size).Ok();
+        var output = new byte[checked((int)size)];
+        getOutput(handle, output).Ok();
+        return output;
+    }
+
+    static string GetUtf8Output(
+        nvJitLinkHandle handle,
+        GetOutputSize getSize,
+        GetOutput getOutput)
+    {
+        getSize(handle, out var size).Ok();
+        var length = checked((int)size);
+        byte[]? pooledBuffer = null;
+        Span<byte> output = length <= 4096
+            ? stackalloc byte[length]
+            : (pooledBuffer = ArrayPool<byte>.Shared.Rent(length)).AsSpan(0, length);
 
         try
         {
-            fixed (byte* pBuffer = bufferSpan)
-            {
-                nvJitLinkGetErrorLog(handle, pBuffer).Ok();
-            }
-            var span = bufferSpan[..(int)logSize];
-            var nullIndex = span.IndexOf((byte)0);
+            getOutput(handle, output).Ok();
+            var nullIndex = output.IndexOf((byte)0);
             if (nullIndex >= 0)
             {
-                span = span[..nullIndex];
+                output = output[..nullIndex];
             }
-            return Encoding.UTF8.GetString(span);
+
+            return Encoding.UTF8.GetString(output);
         }
         finally
         {
-            if (pooledArray != null)
+            if (pooledBuffer is not null)
             {
-                ArrayPool<byte>.Shared.Return(pooledArray);
+                ArrayPool<byte>.Shared.Return(pooledBuffer);
             }
         }
     }
 
-    public static unsafe string nvJitLinkGetInfoLogString(nvJitLinkHandle handle)
-    {
-        nvJitLinkGetInfoLogSize(handle, out var logSize).Ok();
-        if (logSize == 0) { return string.Empty; }
+    delegate nvJitLinkResult GetOutputSize(nvJitLinkHandle handle, out nuint size);
 
-        byte[]? pooledArray = null;
-        Span<byte> bufferSpan = logSize <= 4096
-            ? stackalloc byte[(int)logSize]
-            : (pooledArray = ArrayPool<byte>.Shared.Rent((int)logSize));
-
-        try
-        {
-            fixed (byte* pBuffer = bufferSpan)
-            {
-                nvJitLinkGetInfoLog(handle, pBuffer).Ok();
-                var span = MemoryMarshal.CreateReadOnlySpanFromNullTerminated(pBuffer);
-                return Encoding.UTF8.GetString(span);
-            }
-        }
-        finally
-        {
-            if (pooledArray != null)
-            {
-                ArrayPool<byte>.Shared.Return(pooledArray);
-            }
-        }
-    }
+    delegate nvJitLinkResult GetOutput(nvJitLinkHandle handle, Span<byte> output);
 
     extension(nvJitLinkResult result)
     {
